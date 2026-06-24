@@ -1,0 +1,15 @@
+name: napari-hdf5-reader
+display_name: HDF5 Reader Plugin
+# use 'hidden' to remove plugin from napari hub search results
+visibility: public
+# see https://napari.org/stable/plugins/technical_references/manifest.html#fields for valid categories
+# categories: []
+contributions:
+  commands:
+    - id: napari-hdf5-reader.get_reader
+      python_name: napari_hdf5_reader._reader:napari_get_reader
+      title: Open data with HDF5 Reader Plugin
+  readers:
+    - command: napari-hdf5-reader.get_reader
+      accepts_directories: false
+      filename_patterns: ['*.npy']

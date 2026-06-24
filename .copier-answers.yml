@@ -1,0 +1,19 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: v2.1.2
+_src_path: https://github.com/napari/napari-plugin-template
+display_name: HDF5 Reader Plugin
+email: dlnelson@tutamail.com
+full_name: Douglas Nelson
+github_repository_url: provide later
+github_username_or_organization: LarsN-hub
+include_reader_plugin: true
+include_sample_data_plugin: false
+include_widget_plugin: false
+include_writer_plugin: false
+install_dependabot: true
+install_precommit: true
+license: BSD-3
+module_name: napari_hdf5_reader
+plugin_name: napari-hdf5-reader
+short_description: A plugin that can read image datasets from within HDF5 files, even
+    those buried in complex Group structures, using a recursive exploratory function.
