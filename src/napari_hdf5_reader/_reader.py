@@ -1,16 +1,16 @@
 """
-This module is an example of a barebones numpy reader plugin for napari.
-
-It implements the Reader specification, but your plugin may choose to
-implement multiple readers or even other plugin contributions. see:
-https://napari.org/stable/plugins/building_a_plugin/guides.html#readers
+Read datasets from HDF5 files into napari
 """
 
+from collections.abc import Callable
+
+import h5py
 import numpy as np
 
 
-def napari_get_reader(path):
-    """A basic implementation of a Reader contribution.
+def napari_get_reader(path: str | list[str]) -> Callable | None:
+    """
+    Check if the provided path is for an HDF5 file.
 
     Parameters
     ----------
@@ -19,37 +19,125 @@ def napari_get_reader(path):
 
     Returns
     -------
-    function or None
+    Callable | None
         If the path is a recognized format, return a function that accepts the
         same path or list of paths, and returns a list of layer data tuples.
     """
+
     if isinstance(path, list):
-        # reader plugins may be handed single path, or a list of paths.
-        # if it is a list, it is assumed to be an image stack...
-        # so we are only going to look at the first file.
         path = path[0]
-
-    # the get_reader function should make as many checks as possible
-    # (without loading the full file) to determine if it can read
-    # the path. Here, we check the dtype of the array by loading
-    # it with memmap, so that we don't actually load the full array into memory.
-    # We pretend that this reader can only read integer arrays.
-    try:
-        arr = np.load(path, mmap_mode='r')
-        if arr.dtype != np.int_:
-            return None
-    # napari_get_reader should never raise an exception, because napari
-    # raises its own specific errors depending on what plugins are
-    # available for the given path, so we catch
-    # the OSError that np.load might raise if the file is malformed
-    except OSError:
+    if path[path.rfind('.') :] not in ['.h5', '.hdf', '.hdf5']:
         return None
-
-    # otherwise we return the *function* that can read ``path``.
+    else:
+        try:
+            h5_file: h5py.File = h5py.File(path)
+            tree_list, dset_found = h5_expand_tree(
+                h5_file=h5_file, break_on_dset=True
+            )
+            h5_file.close()
+            if not dset_found:
+                return None
+        except OSError:
+            return None
     return reader_function
 
 
-def reader_function(path):
+def h5_expand_tree(
+    path: str | None = None,
+    *,
+    h5_file: h5py.File | None = None,
+    tree_list: list[str] = None,
+    break_on_dset: bool = False,
+    dset_found: bool = False,
+    print_tree: bool = False,
+) -> list[str] | bool:
+    """
+    Recursive function to expand the file tree of an h5 file.
+
+    Parameters
+    ----------
+    file_path: str
+        Path to file. This is ignored if h5_file is provided.
+    h5_file: h5py.File (optional)
+        An h5 file object created from h5py.File.
+    tree_list: list[str] (optional)
+        The current list of directories in the h5 file tree.
+    break_on_dset: bool
+        Whether or not to break the recursion upon finding the first dataset.
+    dset_found: bool
+        Indicates if a dataset was found during recursive expansion.
+    print_tree: bool
+        Whether or not to print the file tree.
+
+    Returns
+    -------
+    tree_list: list[str]
+        A list containing the h5 file's directory tree.
+    dset_found: bool
+        Indicates if a dataset was found during recursive expansion.
+    """
+
+    if not tree_list:
+        tree_list: list = []
+    if not break_on_dset or (break_on_dset and not dset_found):
+        if not h5_file:
+            h5_file: h5py.File = h5py.File(path)
+        contents: list[str] = list(h5_file.keys())
+        if h5_file.name == '/':
+            tab_count: int = 0
+        else:
+            tab_count: int = h5_file.name.count('/')
+        for item in contents:
+            label = h5_file[item].name[h5_file[item].name.rfind('/') + 1 :]
+            if isinstance(h5_file[item], h5py.Group):
+                if print_tree:
+                    print((tab_count * '  ') + '- ' + label)
+                tree_list, dset_found = h5_expand_tree(
+                    h5_file=h5_file[item],
+                    tree_list=tree_list,
+                    break_on_dset=break_on_dset,
+                    dset_found=dset_found,
+                    print_tree=print_tree,
+                )
+            elif isinstance(h5_file[item], h5py.Dataset):
+                dset_found = True
+                if len(h5_file[item].shape):
+                    label += ' [shape: ' + str(h5_file[item].shape) + ']'
+                    tree_list.append(h5_file[item].name)
+                if print_tree:
+                    print((tab_count * '  ') + '- ' + label)
+            if dset_found and break_on_dset:
+                return tree_list, dset_found
+    return tree_list, dset_found
+
+
+def h5_find_largest(file: str | h5py.File) -> str:
+    """
+    Automatically locate the largest dataset within an h5 file tree.
+
+    Parameters
+    ----------
+    file: str | h5py.File
+        Path to file or an h5py.File object.
+
+    Returns
+    -------
+    largest_path: str
+        The path within the h5 file to the largest item.
+    """
+
+    if isinstance(file, str):
+        file: h5py.File = h5py.File(file)
+    tree_list, _ = h5_expand_tree(h5_file=file)
+    prev_bytes: int = 0
+    for directory in tree_list:
+        if file[directory].nbytes > prev_bytes:
+            current_largest: str = directory
+            prev_bytes = file[directory].nbytes
+    return current_largest
+
+
+def reader_function(path: str | list[str]) -> list[tuple]:
     """Take a path or list of paths and return a list of LayerData tuples.
 
     Readers are expected to return data as a list of tuples, where each tuple
@@ -58,12 +146,12 @@ def reader_function(path):
 
     Parameters
     ----------
-    path : str or list of str
+    path : str | list[str]
         Path to file, or list of paths.
 
     Returns
     -------
-    layer_data : list of tuples
+    layer_data : list[tuple]
         A list of LayerData tuples where each tuple in the list contains
         (data, metadata, layer_type), where data is a numpy array, metadata is
         a dict of keyword arguments for the corresponding viewer.add_* method
@@ -71,15 +159,15 @@ def reader_function(path):
         layer. Both "meta", and "layer_type" are optional. napari will
         default to layer_type=="image" if not provided
     """
-    # handle both a string and a list of strings
+
     paths = [path] if isinstance(path, str) else path
-    # load all files into array
-    arrays = [np.load(_path) for _path in paths]
-    # stack arrays into single array
-    data = np.squeeze(np.stack(arrays))
-
-    # optional kwargs for the corresponding viewer.add_* method
-    add_kwargs = {}
-
-    layer_type = 'image'  # optional, default is "image"
-    return [(data, add_kwargs, layer_type)]
+    arrays: list[np.ndarray] = []
+    for _path in paths:
+        h5_file: h5py.File = h5py.File(_path)
+        arrays.append(np.array(h5_file[h5_find_largest(h5_file)]))
+        h5_file.close()
+    if arrays[0].ndim > 2:
+        data: np.ndarray = np.concat(arrays, 0)
+    else:
+        data: np.ndarray = np.squeeze(np.stack(arrays))
+    return [(data, {}, 'image')]
